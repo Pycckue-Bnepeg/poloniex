@@ -15,8 +15,16 @@ fn connection() {
     match poloniex::connect() {
         Ok(mut client) => {
             client.subscribe(Subscribtion::Ticker, Box::new(|| {
-
+                println!("tick 1");
             })).wait();
+
+            println!("sub 1");
+
+            client.subscribe(Subscribtion::Ticker, Box::new(|| {
+                println!("tick 2");
+            })).wait();
+
+            println!("sub 2");
 
             loop {}
         }

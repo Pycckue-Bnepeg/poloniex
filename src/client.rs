@@ -119,7 +119,6 @@ impl Handler for PoloniexHandler {
                     },
                     _ => (),
                 }
-                // TODO: subscribtions
             } else if let Ok(response) = serde_json::from_str::<Vec<u32>>(&text) {
                 match response[0] {
                     1010 => (),
@@ -148,7 +147,13 @@ impl Handler for PoloniexHandler {
 impl PoloniexHandler {
     // TODO: parse as normal tick
     fn handle_tick(&mut self, tick: Tick) {
-//        debug!("new tick: {:?}", tick);
+        let mut con = self.connection.lock().unwrap();
+
+        if let Some(ref mut list) = con.subscribers.get_mut(&Subscribtion::Ticker) {
+            for item in list.iter_mut() {
+                (item.callback.callback)();
+            }
+        }
     }
 
     fn handle_trade(&mut self, trade: Trade) {
@@ -173,7 +178,8 @@ impl Connection {
         };
 
         if self.subscribers.contains_key(&sub) {
-            self.subscribers.get_mut(&sub).unwrap();
+            let mut list = self.subscribers.get_mut(&sub).unwrap();
+            list.push(subscriber);
         } else {
             self.subscribers.insert(sub, vec![subscriber]);
         }
