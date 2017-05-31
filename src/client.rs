@@ -67,6 +67,18 @@ pub enum Subscribtion {
     BtcEth, // 148
 }
 
+impl Subscribtion {
+    pub fn from_int(id: u32) -> Subscribtion {
+        match id {
+            1000 => Subscribtion::Unknown,
+            1001 => Subscribtion::TrollBox,
+            1002 => Subscribtion::Ticker,
+            1010 => Subscribtion::Hearthbeat,
+            _ => Subscribtion::Unknown,
+        }
+    }
+}
+
 impl PoloniexHandler {
     pub fn new(rx: Sender<ConnectionResult>, connection: SyncCon) -> PoloniexHandler {
         PoloniexHandler {
@@ -111,8 +123,17 @@ impl Handler for PoloniexHandler {
             } else if let Ok(response) = serde_json::from_str::<Vec<u32>>(&text) {
                 match response[0] {
                     1010 => (),
-                    _ => {
-                        debug!("{:?}", response);
+                    id @ _ => {
+                        let mut con = self.connection.lock().unwrap();
+                        let sub = Subscribtion::from_int(id);
+
+                        if let Some(ref mut list) = con.subscribers.get_mut(&sub) {
+                            for item in list.iter_mut() {
+                                if let Some(mut tx) = item.future.take() {
+                                    tx.send(()).unwrap();
+                                }
+                            }
+                        }
                     },
                 }
             } else {
