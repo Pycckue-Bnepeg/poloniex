@@ -61,6 +61,8 @@ pub struct PoloniexHandler {
 pub struct Connection {
     socket: ws::Sender,
     subscribers: Subscribers,
+    // TODO: reason
+    event_close: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Hash, Eq, PartialEq, Debug)]
@@ -163,8 +165,12 @@ impl Handler for PoloniexHandler {
         // TODO: notify subscribers when close
         if token == TIMEOUT {
             debug!("lost connection");
-            let con = self.connection.lock().unwrap();
+            let mut con = self.connection.lock().unwrap();
             con.socket.close(ws::CloseCode::Away)?;
+
+            if let Some(tx) = con.event_close.take() {
+                tx.send(()).unwrap();
+            }
         }
 
         Ok(())
@@ -294,6 +300,23 @@ impl Poloniex {
 
         rx
     }
+
+    pub fn wait_close(&mut self) -> sync::oneshot::Receiver<()> {
+        let mut con = self.connection.lock().unwrap();
+        let (tx, rx) = oneshot();
+        con.event_close = Some(tx);
+
+        rx
+    }
+
+    pub fn shutdown(&mut self) {
+        let mut con = self.connection.lock().unwrap();
+        con.socket.close(ws::CloseCode::Away);
+
+        if let Some(tx) = con.event_close.take() {
+            tx.send(()).unwrap();
+        }
+    }
 }
 
 pub fn connect() -> Result<Poloniex, PoloniexError> {
@@ -306,6 +329,7 @@ pub fn connect() -> Result<Poloniex, PoloniexError> {
             let connection = Arc::new(Mutex::new(Connection {
                 socket: out,
                 subscribers: HashMap::new(),
+                event_close: None,
             }));
 
             let handler = PoloniexHandler::new(tx.clone(), connection);
