@@ -11,7 +11,7 @@ pub struct Response(u32, Option<u32>, JSON);
 pub struct Order(String, pub u32, String, String);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Trade(String, String, pub u32, String, String, u32);
+pub struct Trade(String, String, pub u32, String, String, u64);
 /*  type?, id, type, rate, amount, date
     when type is i, there will be next struct:
     [ EVENT_ID, SEQ, [
@@ -72,11 +72,11 @@ impl Order {
         if self.1 == 1 { OrderType::Bid } else { OrderType::Ask }
     }
 
-    pub fn get_rate(&self) -> f32 {
+    pub fn get_rate(&self) -> f64 {
         self.2.parse().unwrap()
     }
 
-    pub fn get_amount(&self) -> f32 {
+    pub fn get_amount(&self) -> f64 {
         self.3.parse().unwrap()
     }
 }
@@ -90,19 +90,19 @@ impl Trade {
         if self.2 == 1 { TradeType::Buy } else { TradeType::Sell }
     }
 
-    pub fn get_rate(&self) -> f32 {
+    pub fn get_rate(&self) -> f64 {
         self.3.parse().unwrap()
     }
 
-    pub fn get_amount(&self) -> f32 {
+    pub fn get_amount(&self) -> f64 {
         self.4.parse().unwrap()
     }
 
-    pub fn get_date(&self) -> u32 {
+    pub fn get_date(&self) -> u64 {
         self.5
     }
 
-    pub fn get_total(&self) -> f32 {
+    pub fn get_total(&self) -> f64 {
         self.get_rate() * self.get_amount()
     }
 }
