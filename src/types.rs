@@ -8,10 +8,10 @@ use serde_json::Value as JSON;
 pub struct Response(u32, Option<u32>, JSON);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Order(String, u32, String, String);
+pub struct Order(String, pub u32, String, String);
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Trade(String, String, u32, String, String, u32);
+pub struct Trade(String, String, pub u32, String, String, u32);
 /*  type?, id, type, rate, amount, date
     when type is i, there will be next struct:
     [ EVENT_ID, SEQ, [
@@ -23,7 +23,7 @@ pub struct Trade(String, String, u32, String, String, u32);
 */
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Tick(u32, String, String, String, String, String, String, u32, String, String);
+pub struct Tick(pub u32, pub String, pub String, pub String, pub String, pub String, pub String, pub u32, pub String, pub String);
 // pair, last, lowestAsk, highestBid, percentChanges, baseVolime, quoteVolume, isFrozen, 24hr_high, 24hr_low
 /*
     Number(PosInt(14)),
