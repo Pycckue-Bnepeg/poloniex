@@ -12,7 +12,15 @@ pub struct Order(String, u32, String, String);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Trade(String, String, u32, String, String, u32);
-// type?, id, type, rate, amount, date
+/*  type?, id, type, rate, amount, date
+    when type is i, there will be next struct:
+    [ EVENT_ID, SEQ, [
+                        ["i", {
+                            currencyPair: "1_2",
+                            orderBook: [{ price_1: price_2 }, { price_2: price_1 }] // asks, bids
+                         }]
+    ]]
+*/
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Tick(u32, String, String, String, String, String, String, u32, String, String);

@@ -1,9 +1,11 @@
+// TODO: documentation
 use ws;
 use serde_json;
 use std;
 use types;
 
 use ws::{Handler, Result as WSResult, Message as WSMessage};
+use ws::util::{Timeout, Token};
 use serde_json::Value as JSON;
 use std::sync::mpsc::{Sender, channel};
 use error::PoloniexError;
@@ -17,13 +19,15 @@ use futures::sync::oneshot::Sender as FSender;
 use types::{Response, Order, Trade, Tick};
 
 const API_PLX: &'static str = "wss://api2.poloniex.com";
+const TIMEOUT: Token = Token(1000);
+const PING: Token = Token(1001);
 
 type SyncCon = Arc<Mutex<Connection>>;
 type ConnectionResult = Result<SyncCon, PoloniexError>;
 type Subscribers = HashMap<Subscribtion, Vec<Subscriber>>;
 
 pub struct CallbackWrapper {
-    callback: Box<FnMut()>,
+    callback: Box<FnMut(&Message)>,
 }
 
 unsafe impl <'a> Send for CallbackWrapper {}
@@ -36,6 +40,7 @@ pub enum Message {
     Unsubscribe(u32),
     Trade(u32, Trade), // Pair, Trade
     Order(u32, Order), // Pair, Order
+    Tick(Tick),
 }
 
 pub struct Subscriber {
@@ -50,6 +55,7 @@ pub struct Poloniex {
 pub struct PoloniexHandler {
     connection: SyncCon,
     rx: Sender<ConnectionResult>,
+    timeout: Option<Timeout>,
 }
 
 pub struct Connection {
@@ -57,7 +63,7 @@ pub struct Connection {
     subscribers: Subscribers,
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Debug)]
 pub enum Subscribtion {
     Unknown, // 1000 - something linked to account
     TrollBox, // 1001
@@ -74,9 +80,11 @@ impl Subscribtion {
             1001 => Subscribtion::TrollBox,
             1002 => Subscribtion::Ticker,
             1010 => Subscribtion::Hearthbeat,
+            148 => Subscribtion::BtcEth,
             _ => Subscribtion::Unknown,
         }
     }
+    // TODO: to_int
 }
 
 impl PoloniexHandler {
@@ -84,6 +92,7 @@ impl PoloniexHandler {
         PoloniexHandler {
             rx,
             connection,
+            timeout: None,
         }
     }
 }
@@ -91,6 +100,10 @@ impl PoloniexHandler {
 impl Handler for PoloniexHandler {
     fn on_open(&mut self, h: ws::Handshake) -> WSResult<()> {
         debug!("sockets are opened");
+
+        let con = self.connection.lock().unwrap();
+        con.socket.timeout(60000, PING);
+
         self.rx.send(Ok(self.connection.clone())).unwrap();
         Ok(())
     }
@@ -109,11 +122,18 @@ impl Handler for PoloniexHandler {
                     },
                     1003 => unimplemented!(),
                     id @ 1...1000 => {
-                        for item in data.as_array().unwrap() {
-                            if let Ok(trade) = serde_json::from_value(item.clone()) {
-                                self.handle_trade(trade);
-                            } else if let Ok(order) = serde_json::from_value(item.clone()) {
-                                self.handle_order(order);
+                        if let Some(list) = data.as_array() {
+                            // godlike! there is information about new subscribtion (there is an order book, more info in types.rs)
+                            if list[0][0] == json!("i") {
+                                let sub = Subscribtion::from_int(response.get_event());
+                                self.notify_subscribers(sub);
+                            }
+                            for item in data.as_array().unwrap() {
+                                if let Ok(trade) = serde_json::from_value(item.clone()) {
+                                    self.handle_trade(id, trade);
+                                } else if let Ok(order) = serde_json::from_value(item.clone()) {
+                                    self.handle_order(id, order);
+                                }
                             }
                         }
                     },
@@ -123,16 +143,8 @@ impl Handler for PoloniexHandler {
                 match response[0] {
                     1010 => (),
                     id @ _ => {
-                        let mut con = self.connection.lock().unwrap();
                         let sub = Subscribtion::from_int(id);
-
-                        if let Some(ref mut list) = con.subscribers.get_mut(&sub) {
-                            for item in list.iter_mut() {
-                                if let Some(mut tx) = item.future.take() {
-                                    tx.send(()).unwrap();
-                                }
-                            }
-                        }
+                        self.notify_subscribers(sub);
                     },
                 }
             } else {
@@ -142,6 +154,43 @@ impl Handler for PoloniexHandler {
 
         Ok(())
     }
+
+    fn on_timeout(&mut self, token: Token) -> WSResult<()> {
+        if token == PING {
+            self.send_raw('.')?;
+        }
+
+        // TODO: notify subscribers when close
+        if token == TIMEOUT {
+            debug!("lost connection");
+            let con = self.connection.lock().unwrap();
+            con.socket.close(ws::CloseCode::Away)?;
+        }
+
+        Ok(())
+    }
+
+    fn on_new_timeout(&mut self, token: Token, timeout: Timeout) -> WSResult<()> {
+        if token == TIMEOUT {
+            if let Some(last_timeout) = self.timeout.take() {
+                let con = self.connection.lock().unwrap();
+                con.socket.cancel(last_timeout)?;
+            }
+            self.timeout = Some(timeout);
+        }
+
+        Ok(())
+    }
+
+    fn on_frame(&mut self, frame: ws::Frame) -> WSResult<Option<ws::Frame>> {
+        let con = self.connection.lock().unwrap();
+
+        con.socket.timeout(60000, TIMEOUT)?;
+
+        Ok(Some(frame))
+    }
+
+    // TODO: error handler
 }
 
 impl PoloniexHandler {
@@ -150,23 +199,54 @@ impl PoloniexHandler {
         let mut con = self.connection.lock().unwrap();
 
         if let Some(ref mut list) = con.subscribers.get_mut(&Subscribtion::Ticker) {
+            let message = Message::Tick(tick);
             for item in list.iter_mut() {
-                (item.callback.callback)();
+                (item.callback.callback)(&message);
             }
         }
     }
 
-    fn handle_trade(&mut self, trade: Trade) {
-//        debug!("new trade: {:?}", trade);
+    fn handle_trade(&mut self, pair: u32, trade: Trade) {
+        let mut con = self.connection.lock().unwrap();
+
+        if let Some(ref mut list) = con.subscribers.get_mut(&Subscribtion::from_int(pair)) {
+            let message = Message::Trade(pair, trade);
+            for item in list.iter_mut() {
+                (item.callback.callback)(&message);
+            }
+        }
     }
 
-    fn handle_order(&mut self, order: Order) {
-//        debug!("new order: {:?}", order);
+    fn handle_order(&mut self, pair: u32, order: Order) {
+        let mut con = self.connection.lock().unwrap();
+
+        if let Some(ref mut list) = con.subscribers.get_mut(&Subscribtion::from_int(pair)) {
+            let message = Message::Order(pair, order);
+            for item in list.iter_mut() {
+                (item.callback.callback)(&message);
+            }
+        }
     }
 
-    fn send_msg(&self, msg: &JSON) {
+    fn send_msg(&self, msg: &JSON) -> WSResult<()> {
+        self.send_raw(serde_json::to_string(&msg).unwrap())
+    }
+
+    fn send_raw<T: ToString>(&self, msg: T) -> WSResult<()> {
         let con = self.connection.lock().unwrap();
-        send_message(&con, msg).unwrap();
+        con.socket.send(msg.to_string())
+    }
+
+    fn notify_subscribers(&mut self, sub: Subscribtion) {
+        let mut con = self.connection.lock().unwrap();
+
+        if let Some(ref mut list) = con.subscribers.get_mut(&sub) {
+            for item in list.iter_mut() {
+                if let Some(mut tx) = item.future.take() {
+                    tx.send(()).unwrap();
+                }
+            }
+        }
     }
 }
 
@@ -187,11 +267,13 @@ impl Connection {
 }
 
 impl Poloniex {
-    pub fn subscribe(&mut self, sub: Subscribtion, cb: Box<FnMut()>) -> sync::oneshot::Receiver<()> {
+    pub fn subscribe(&mut self, sub: Subscribtion, cb: Box<FnMut(&Message)>) -> sync::oneshot::Receiver<()> {
+        // TODO: remove match in function Subscribion::to_int
         let request = json!({
             "command": "subscribe",
             "channel": match sub {
                 Subscribtion::Ticker => "1002",
+                Subscribtion::BtcEth => "148",
                 Subscribtion::Pair(ref pair) => pair.as_str(),
                 _ => "1002",
             }
@@ -205,6 +287,7 @@ impl Poloniex {
 
         let mut con = self.connection.lock().unwrap();
 
+        debug!("subscribed to {:?}", sub);
         con.subscribe(sub, tx, callback);
 
         send_message(&con, &request);

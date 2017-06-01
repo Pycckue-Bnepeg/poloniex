@@ -13,7 +13,6 @@ extern crate serde_json;
 
 pub mod client;
 pub mod error;
-pub use client::connect;
-pub use client::Subscribtion;
+pub use client::{connect, Message, Subscribtion};
 
 mod types;

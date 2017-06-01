@@ -5,7 +5,7 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 
-use poloniex::Subscribtion;
+use poloniex::{Message, Subscribtion};
 use futures::Future;
 
 #[test]
@@ -14,17 +14,15 @@ fn connection() {
 
     match poloniex::connect() {
         Ok(mut client) => {
-            client.subscribe(Subscribtion::Ticker, Box::new(|| {
-                println!("tick 1");
+            client.subscribe(Subscribtion::BtcEth, Box::new(|msg| {
+                match msg {
+                    &Message::Trade(pair, _) => println!("trade for {}", pair),
+                    &Message::Order(pair, _) => println!("order for {}", pair),
+                    _ => println!("unknown message"),
+                }
             })).wait();
 
-            println!("sub 1");
-
-            client.subscribe(Subscribtion::Ticker, Box::new(|| {
-                println!("tick 2");
-            })).wait();
-
-            println!("sub 2");
+            println!("subscribed");
 
             loop {}
         }
