@@ -106,3 +106,9 @@ impl Trade {
         self.get_rate() * self.get_amount()
     }
 }
+
+impl Tick {
+    pub fn get_pair(&self) -> u32 {
+        self.0
+    }
+}
