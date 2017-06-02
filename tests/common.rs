@@ -25,9 +25,7 @@ fn connection() {
             println!("subscribed");
 
             let future = client.wait_close();
-
             client.shutdown();
-
             future.wait();
 
             println!("connection closed!");

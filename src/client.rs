@@ -197,6 +197,23 @@ impl Handler for PoloniexHandler {
     }
 
     // TODO: error handler
+    fn on_shutdown(&mut self) {
+        debug!("shutdown!");
+    }
+
+    fn on_close(&mut self, code: ws::CloseCode, reason: &str) {
+        debug!("close with code {:?}, reason: {}", code, reason);
+
+        let mut con = self.connection.lock().unwrap();
+        if let Some(tx) = con.event_close.take() {
+            con.socket.close(ws::CloseCode::Away);
+            tx.send(()).unwrap();
+        }
+    }
+
+    fn on_error(&mut self, error: ws::Error) {
+        debug!("new error: {}", error);
+    }
 }
 
 impl PoloniexHandler {
